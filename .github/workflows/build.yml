@@ -23,12 +23,29 @@ jobs:
 
       - name: Fetch iOS 8.4 SDK
         run: |
-          git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks /tmp/sdks
-          cd /tmp/sdks
-          git sparse-checkout set --no-cone iPhoneOS8.4.sdk
-          git checkout
           mkdir -p "$THEOS/sdks"
-          cp -r iPhoneOS8.4.sdk "$THEOS/sdks/"
+
+          fetch_sdk() {
+            local repo="$1"
+            rm -rf /tmp/sdks
+            git clone -n --depth=1 --filter=tree:0 "$repo" /tmp/sdks || return 1
+            cd /tmp/sdks
+            git sparse-checkout set --no-cone iPhoneOS8.4.sdk || return 1
+            git checkout || return 1
+            [ -d iPhoneOS8.4.sdk ] || return 1
+            cp -r iPhoneOS8.4.sdk "$THEOS/sdks/"
+            cd -
+          }
+
+          # theos/sdks официально начинается с 9.3, восьмёрки там нет — используем зеркала
+          fetch_sdk https://github.com/Lessica/iPhoneOS-SDKs \
+            || fetch_sdk https://github.com/okanon/iPhoneOS.sdk
+
+          if [ ! -d "$THEOS/sdks/iPhoneOS8.4.sdk" ]; then
+            echo "::error::Не удалось получить iPhoneOS8.4.sdk ни из одного источника"
+            exit 1
+          fi
+          ls "$THEOS/sdks/iPhoneOS8.4.sdk" | head -20
 
       - name: Build PhonePod.ipa
         run: |
