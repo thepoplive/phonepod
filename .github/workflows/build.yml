@@ -1,0 +1,43 @@
+name: Build PhonePod
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      THEOS: /home/runner/theos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Theos + toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl git perl sudo make fakeroot rsync
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-linux.sh)"
+
+      - name: Fetch iOS 8.4 SDK
+        run: |
+          git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks /tmp/sdks
+          cd /tmp/sdks
+          git sparse-checkout set --no-cone iPhoneOS8.4.sdk
+          git checkout
+          mkdir -p "$THEOS/sdks"
+          cp -r iPhoneOS8.4.sdk "$THEOS/sdks/"
+
+      - name: Build PhonePod.ipa
+        run: |
+          export PATH="$THEOS/toolchain/linux/iphone/bin:$PATH"
+          make package FINALPACKAGE=1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhonePod-ipa
+          path: packages/*.ipa
+          if-no-files-found: error
