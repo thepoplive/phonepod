@@ -1,8 +1,6 @@
 ARCHS = armv7
 TARGET = iphone:clang:8.4:6.0
 
-THEOS_PACKAGE_SCHEME = ios
-
 include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = PhonePod
