@@ -17,9 +17,9 @@ jobs:
 
       - name: Install Theos + toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl git perl sudo make fakeroot rsync
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-linux.sh)"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          ls "$THEOS/makefiles/common.mk"
+          ls "$THEOS/toolchain/linux/iphone/bin" | head -5
 
       - name: Fetch iOS 8.4 SDK
         run: |
