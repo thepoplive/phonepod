@@ -20,6 +20,8 @@ jobs:
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
           ls "$THEOS/makefiles/common.mk"
           ls "$THEOS/toolchain/linux/iphone/bin" | head -5
+          sudo apt-get update && sudo apt-get install -y build-essential cmake libxml2-dev || true
+          pip3 install libplist || true
 
       - name: Fetch iOS 8.4 SDK
         run: |
