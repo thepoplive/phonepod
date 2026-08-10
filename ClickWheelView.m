@@ -92,7 +92,7 @@
 	return sqrt(dx * dx + dy * dy);
 }
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
 	UITouch *touch = [touches anyObject];
 	CGPoint p = [touch locationInView:self];
 	self.touchStartPoint = p;
@@ -104,7 +104,7 @@
 	self.touchStartedInCenter = [self distanceFromCenter:p] <= centerRadius;
 }
 
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+- (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
 	if (self.touchStartedInCenter) return;
 
 	UITouch *touch = [touches anyObject];
@@ -126,7 +126,7 @@
 	}
 }
 
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
 	UITouch *touch = [touches anyObject];
 	CGPoint p = [touch locationInView:self];
 
