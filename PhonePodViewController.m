@@ -5,7 +5,7 @@
 @interface PhonePodViewController () <ClickWheelViewDelegate, UITableViewDataSource, UITableViewDelegate>
 
 @property (nonatomic, strong) MPMusicPlayerController *player;
-@property (nonatomic, strong) NSArray<MPMediaItem *> *songs;
+@property (nonatomic, strong) NSArray *songs;
 
 @property (nonatomic, strong) UIView *chromeView;      // "корпус" плеера
 @property (nonatomic, strong) UIView *screenView;       // "экранчик" сверху
@@ -21,7 +21,7 @@
 
 @property (nonatomic, assign) NSInteger selectedRow;
 @property (nonatomic, assign) BOOL showingNowPlaying;
-@property (nonatomic, strong) CGFloat *scrollAccumulator;
+@property (nonatomic, assign) CGFloat scrollAccumulator;
 @property (nonatomic, assign) CGFloat listScrollAccumulator;
 
 @property (nonatomic, strong) NSTimer *progressTimer;
