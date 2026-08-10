@@ -20,7 +20,6 @@ jobs:
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
           ls "$THEOS/makefiles/common.mk"
           ls "$THEOS/toolchain/linux/iphone/bin" | head -5
-          sudo apt-get update && sudo apt-get install -y libplist-dev
 
       - name: Fetch iOS 8.4 SDK
         run: |
@@ -38,20 +37,29 @@ jobs:
             cd -
           }
 
-          # theos/sdks официально начинается с 9.3, восьмёрки там нет — используем зеркала
           fetch_sdk https://github.com/Lessica/iPhoneOS-SDKs \
             || fetch_sdk https://github.com/okanon/iPhoneOS.sdk
 
           if [ ! -d "$THEOS/sdks/iPhoneOS8.4.sdk" ]; then
-            echo "::error::Не удалось получить iPhoneOS8.4.sdk ни из одного источника"
+            echo "::error::Failed to fetch iPhoneOS8.4.sdk"
             exit 1
           fi
           ls "$THEOS/sdks/iPhoneOS8.4.sdk" | head -20
 
-      - name: Build PhonePod.ipa
+      - name: Build PhonePod
         run: |
           export PATH="$THEOS/toolchain/linux/iphone/bin:$PATH"
           make package FINALPACKAGE=1
+
+      - name: Convert deb to ipa
+        run: |
+          mkdir -p Payload
+          dpkg-deb -x packages/*.deb extracted
+          APP_PATH=$(find extracted -name "*.app" -type d | head -1)
+          cp -r "$APP_PATH" Payload/
+          zip -r PhonePod.ipa Payload
+          mkdir -p packages
+          mv PhonePod.ipa packages/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

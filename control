@@ -1,0 +1,8 @@
+Package: xyz.blxckfvde.phonepod
+Name: PhonePod
+Version: 1.0
+Architecture: iphoneos-arm
+Description: iPod style music player for iOS 6-8
+Maintainer: blxckfvde
+Author: blxckfvde
+Section: Multimedia
