@@ -8,12 +8,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       THEOS: /home/runner/theos
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Theos + toolchain
         run: |
@@ -79,3 +83,30 @@ jobs:
           name: PhonePod-ipa
           path: packages/*.ipa
           if-no-files-found: error
+
+      - name: Determine next version
+        id: version
+        run: |
+          LAST_MINOR=$(git tag --list 'v0.*.0' | sed -E 's/^v0\.([0-9]+)\.0$/\1/' | sort -n | tail -n1)
+          if [ -z "$LAST_MINOR" ]; then
+            NEXT_MINOR=1
+          else
+            NEXT_MINOR=$((LAST_MINOR + 1))
+          fi
+          VERSION="0.${NEXT_MINOR}.0"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rename ipa with version
+        run: |
+          mkdir -p release
+          cp packages/PhonePod.ipa "release/PhonePod-${{ steps.version.outputs.version }}.ipa"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "release/PhonePod-${{ steps.version.outputs.version }}.ipa" \
+            --title "PhonePod ${{ steps.version.outputs.tag }}" \
+            --notes "Автоматическая сборка из commit ${{ github.sha }}"
