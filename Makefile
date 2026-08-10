@@ -11,3 +11,4 @@ PhonePod_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 PhonePod_CODESIGN_FLAGS = -Sentitlements.plist
 
 include $(THEOS_MAKE_PATH)/application.mk
+THEOS_PACKAGE_FORMAT = ipa
