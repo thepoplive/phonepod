@@ -2,14 +2,38 @@
 #import "ClickWheelView.h"
 #import <MediaPlayer/MediaPlayer.h>
 
+typedef NS_ENUM(NSInteger, PPScreen) {
+	PPScreenMainMenu,
+	PPScreenMusic,
+	PPScreenPlaylists,
+	PPScreenPhotos,
+	PPScreenVideos,
+	PPScreenExtras,
+	PPScreenSettings,
+	PPScreenNowPlaying
+};
+
 @interface PhonePodViewController () <ClickWheelViewDelegate, UITableViewDataSource, UITableViewDelegate>
 
 @property (nonatomic, strong) MPMusicPlayerController *player;
 @property (nonatomic, strong) NSArray *songs;
 
-@property (nonatomic, strong) UIView *chromeView;      // "корпус" плеера
-@property (nonatomic, strong) UIView *screenView;       // "экранчик" сверху
+@property (nonatomic, strong) UIView *chromeView;
+@property (nonatomic, strong) UIView *screenView;
+@property (nonatomic, strong) UILabel *topBarLabel;
+
+@property (nonatomic, strong) NSArray *mainMenuItems;
+@property (nonatomic, strong) UITableView *mainMenuTableView;
+@property (nonatomic, assign) NSInteger mainMenuSelectedRow;
+@property (nonatomic, assign) CGFloat mainMenuScrollAccumulator;
+
 @property (nonatomic, strong) UITableView *libraryTableView;
+@property (nonatomic, assign) NSInteger selectedRow;
+@property (nonatomic, assign) CGFloat listScrollAccumulator;
+
+@property (nonatomic, strong) UIView *placeholderView;
+@property (nonatomic, strong) UILabel *placeholderLabel;
+
 @property (nonatomic, strong) UIView *nowPlayingView;
 @property (nonatomic, strong) UIImageView *artworkView;
 @property (nonatomic, strong) UILabel *titleLabel;
@@ -18,12 +42,7 @@
 @property (nonatomic, strong) UILabel *statusLabel;
 
 @property (nonatomic, strong) ClickWheelView *wheel;
-
-@property (nonatomic, assign) NSInteger selectedRow;
-@property (nonatomic, assign) BOOL showingNowPlaying;
-@property (nonatomic, assign) CGFloat scrollAccumulator;
-@property (nonatomic, assign) CGFloat listScrollAccumulator;
-
+@property (nonatomic, strong) NSMutableArray *screenStack;
 @property (nonatomic, strong) NSTimer *progressTimer;
 
 @end
@@ -34,69 +53,110 @@
 	[super viewDidLoad];
 	self.view.backgroundColor = [UIColor blackColor];
 
-	self.player = [MPMusicPlayerController applicationMusicPlayer];
+	self.player = [MPMusicPlayerController systemMusicPlayer];
 	self.songs = @[];
 	self.selectedRow = 0;
+	self.mainMenuSelectedRow = 0;
 	self.listScrollAccumulator = 0;
+	self.mainMenuScrollAccumulator = 0;
+	self.screenStack = [NSMutableArray arrayWithObject:@(PPScreenMainMenu)];
 
 	[self buildChrome];
 	[self buildScreen];
 	[self buildWheel];
 	[self loadLibrary];
+	[self displayCurrentScreen];
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
 		selector:@selector(nowPlayingItemChanged)
 		name:MPMusicPlayerControllerNowPlayingItemDidChangeNotification
 		object:self.player];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+		selector:@selector(playbackStateChanged)
+		name:MPMusicPlayerControllerPlaybackStateDidChangeNotification
+		object:self.player];
 	[self.player beginGeneratingPlaybackNotifications];
+
+	[self playbackStateChanged];
 }
 
-#pragma mark - Layout
-
 - (void)buildChrome {
-	CGRect b = self.view.bounds;
-	CGFloat margin = 24;
-	CGFloat width = b.size.width - margin * 2;
-
-	self.chromeView = [[UIView alloc] initWithFrame:CGRectMake(margin, 50, width, b.size.height - 100)];
-	self.chromeView.backgroundColor = [UIColor colorWithWhite:0.93 alpha:1.0];
-	self.chromeView.layer.cornerRadius = 22;
+	self.chromeView = [[UIView alloc] initWithFrame:self.view.bounds];
+	self.chromeView.backgroundColor = [UIColor colorWithWhite:0.92 alpha:1.0];
 	self.chromeView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 	[self.view addSubview:self.chromeView];
 }
 
 - (void)buildScreen {
-	CGFloat w = self.chromeView.bounds.size.width;
+	CGFloat topInset = 28;
 	CGFloat pad = 14;
-	CGFloat screenHeight = self.chromeView.bounds.size.height * 0.38;
+	CGFloat w = self.chromeView.bounds.size.width - pad * 2;
+	CGFloat screenHeight = self.chromeView.bounds.size.height * 0.40;
 
-	self.screenView = [[UIView alloc] initWithFrame:CGRectMake(pad, pad, w - pad * 2, screenHeight)];
+	self.screenView = [[UIView alloc] initWithFrame:CGRectMake(pad, topInset, w, screenHeight)];
 	self.screenView.backgroundColor = [UIColor whiteColor];
-	self.screenView.layer.cornerRadius = 6;
-	self.screenView.layer.borderColor = [UIColor colorWithWhite:0.6 alpha:1.0].CGColor;
+	self.screenView.layer.cornerRadius = 4;
+	self.screenView.layer.borderColor = [UIColor colorWithWhite:0.55 alpha:1.0].CGColor;
 	self.screenView.layer.borderWidth = 1.0;
 	self.screenView.clipsToBounds = YES;
 	self.screenView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
 	[self.chromeView addSubview:self.screenView];
 
-	// Библиотека
-	self.libraryTableView = [[UITableView alloc] initWithFrame:self.screenView.bounds style:UITableViewStylePlain];
+	CGFloat topBarHeight = 20;
+	self.topBarLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, w, topBarHeight)];
+	self.topBarLabel.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+	self.topBarLabel.textColor = [UIColor whiteColor];
+	self.topBarLabel.font = [UIFont boldSystemFontOfSize:12];
+	self.topBarLabel.textAlignment = NSTextAlignmentCenter;
+	self.topBarLabel.text = @"iPod";
+	self.topBarLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+	[self.screenView addSubview:self.topBarLabel];
+
+	CGRect contentFrame = CGRectMake(0, topBarHeight, w, screenHeight - topBarHeight);
+
+	self.mainMenuItems = @[@"Music", @"Photos", @"Videos", @"Playlists", @"Extras", @"Settings", @"Shuffle Songs", @"Now Playing"];
+	self.mainMenuTableView = [[UITableView alloc] initWithFrame:contentFrame style:UITableViewStylePlain];
+	self.mainMenuTableView.dataSource = self;
+	self.mainMenuTableView.delegate = self;
+	self.mainMenuTableView.rowHeight = 32;
+	self.mainMenuTableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
+	self.mainMenuTableView.userInteractionEnabled = NO;
+	self.mainMenuTableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.screenView addSubview:self.mainMenuTableView];
+
+	self.libraryTableView = [[UITableView alloc] initWithFrame:contentFrame style:UITableViewStylePlain];
 	self.libraryTableView.dataSource = self;
 	self.libraryTableView.delegate = self;
 	self.libraryTableView.rowHeight = 34;
 	self.libraryTableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
-	self.libraryTableView.userInteractionEnabled = NO; // навигация только колесом
+	self.libraryTableView.userInteractionEnabled = NO;
+	self.libraryTableView.hidden = YES;
 	self.libraryTableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 	[self.screenView addSubview:self.libraryTableView];
 
-	// Now Playing
-	self.nowPlayingView = [[UIView alloc] initWithFrame:self.screenView.bounds];
+	self.placeholderView = [[UIView alloc] initWithFrame:contentFrame];
+	self.placeholderView.backgroundColor = [UIColor whiteColor];
+	self.placeholderView.hidden = YES;
+	self.placeholderView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.screenView addSubview:self.placeholderView];
+
+	self.placeholderLabel = [[UILabel alloc] initWithFrame:self.placeholderView.bounds];
+	self.placeholderLabel.numberOfLines = 0;
+	self.placeholderLabel.textAlignment = NSTextAlignmentCenter;
+	self.placeholderLabel.textColor = [UIColor grayColor];
+	self.placeholderLabel.font = [UIFont systemFontOfSize:13];
+	self.placeholderLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.placeholderView addSubview:self.placeholderLabel];
+
+	self.nowPlayingView = [[UIView alloc] initWithFrame:contentFrame];
 	self.nowPlayingView.backgroundColor = [UIColor whiteColor];
 	self.nowPlayingView.hidden = YES;
 	self.nowPlayingView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 	[self.screenView addSubview:self.nowPlayingView];
 
-	CGFloat artSize = screenHeight * 0.55;
+	CGFloat contentHeight = contentFrame.size.height;
+	CGFloat artSize = contentHeight * 0.6;
+
 	self.artworkView = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, artSize, artSize)];
 	self.artworkView.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0];
 	self.artworkView.contentMode = UIViewContentModeScaleAspectFill;
@@ -130,16 +190,86 @@
 
 - (void)buildWheel {
 	CGFloat w = self.chromeView.bounds.size.width;
-	CGFloat wheelSize = w - 28;
-	CGFloat top = CGRectGetMaxY(self.screenView.frame) + 20;
+	CGFloat wheelTop = CGRectGetMaxY(self.screenView.frame) + 24;
+	CGFloat maxWheelWidth = w - 40;
+	CGFloat maxWheelHeight = self.chromeView.bounds.size.height - wheelTop - 30;
+	CGFloat wheelSize = MIN(maxWheelWidth, maxWheelHeight);
 
-	self.wheel = [[ClickWheelView alloc] initWithFrame:CGRectMake((w - wheelSize) / 2, top, wheelSize, wheelSize)];
+	self.wheel = [[ClickWheelView alloc] initWithFrame:CGRectMake((w - wheelSize) / 2, wheelTop, wheelSize, wheelSize)];
 	self.wheel.delegate = self;
 	self.wheel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
 	[self.chromeView addSubview:self.wheel];
 }
 
-#pragma mark - Библиотека
+- (PPScreen)currentScreen {
+	return [[self.screenStack lastObject] integerValue];
+}
+
+- (void)pushScreen:(PPScreen)screen {
+	[self.screenStack addObject:@(screen)];
+	[self displayCurrentScreen];
+}
+
+- (void)popScreen {
+	if (self.screenStack.count > 1) {
+		[self.screenStack removeLastObject];
+		[self displayCurrentScreen];
+	}
+}
+
+- (void)displayCurrentScreen {
+	PPScreen screen = self.currentScreen;
+
+	self.mainMenuTableView.hidden = (screen != PPScreenMainMenu);
+	self.libraryTableView.hidden = (screen != PPScreenMusic);
+	self.nowPlayingView.hidden = (screen != PPScreenNowPlaying);
+	self.placeholderView.hidden = !(screen == PPScreenPlaylists || screen == PPScreenPhotos ||
+		screen == PPScreenVideos || screen == PPScreenExtras || screen == PPScreenSettings);
+
+	switch (screen) {
+		case PPScreenMainMenu: self.topBarLabel.text = @"iPod"; break;
+		case PPScreenMusic: self.topBarLabel.text = @"Music"; break;
+		case PPScreenPlaylists: self.topBarLabel.text = @"Playlists"; self.placeholderLabel.text = @"Плейлисты\n(в разработке)"; break;
+		case PPScreenPhotos: self.topBarLabel.text = @"Photos"; self.placeholderLabel.text = @"Фото\n(в разработке)"; break;
+		case PPScreenVideos: self.topBarLabel.text = @"Videos"; self.placeholderLabel.text = @"Видео\n(в разработке)"; break;
+		case PPScreenExtras: self.topBarLabel.text = @"Extras"; self.placeholderLabel.text = @"Дополнения\n(в разработке)"; break;
+		case PPScreenSettings: self.topBarLabel.text = @"Settings"; self.placeholderLabel.text = @"Настройки\n(в разработке)"; break;
+		case PPScreenNowPlaying: self.topBarLabel.text = @"Now Playing"; break;
+	}
+}
+
+- (NSInteger)mainMenuNumberOfRows {
+	return self.mainMenuItems.count;
+}
+
+- (void)highlightMainMenuRow:(NSInteger)row {
+	row = MAX(0, MIN(row, (NSInteger)self.mainMenuItems.count - 1));
+	self.mainMenuSelectedRow = row;
+	[self.mainMenuTableView reloadData];
+	[self.mainMenuTableView scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:0]
+		atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+}
+
+- (void)selectMainMenuItem:(NSInteger)row {
+	NSString *item = self.mainMenuItems[row];
+	if ([item isEqualToString:@"Music"]) {
+		[self pushScreen:PPScreenMusic];
+	} else if ([item isEqualToString:@"Photos"]) {
+		[self pushScreen:PPScreenPhotos];
+	} else if ([item isEqualToString:@"Videos"]) {
+		[self pushScreen:PPScreenVideos];
+	} else if ([item isEqualToString:@"Playlists"]) {
+		[self pushScreen:PPScreenPlaylists];
+	} else if ([item isEqualToString:@"Extras"]) {
+		[self pushScreen:PPScreenExtras];
+	} else if ([item isEqualToString:@"Settings"]) {
+		[self pushScreen:PPScreenSettings];
+	} else if ([item isEqualToString:@"Shuffle Songs"]) {
+		[self shuffleAndPlay];
+	} else if ([item isEqualToString:@"Now Playing"]) {
+		[self pushScreen:PPScreenNowPlaying];
+	}
+}
 
 - (void)loadLibrary {
 	MPMediaQuery *query = [MPMediaQuery songsQuery];
@@ -148,26 +278,6 @@
 	if (self.songs.count > 0) {
 		[self highlightRow:0];
 	}
-}
-
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-	return self.songs.count;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-	static NSString *cellId = @"song";
-	UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
-	if (!cell) {
-		cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
-		cell.selectionStyle = UITableViewCellSelectionStyleNone;
-	}
-	MPMediaItem *item = self.songs[indexPath.row];
-	cell.textLabel.text = [item valueForProperty:MPMediaItemPropertyTitle] ?: @"Без названия";
-	cell.detailTextLabel.text = [item valueForProperty:MPMediaItemPropertyArtist] ?: @"";
-	cell.backgroundColor = (indexPath.row == self.selectedRow) ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor whiteColor];
-	cell.textLabel.textColor = (indexPath.row == self.selectedRow) ? [UIColor whiteColor] : [UIColor blackColor];
-	cell.detailTextLabel.textColor = (indexPath.row == self.selectedRow) ? [UIColor whiteColor] : [UIColor darkGrayColor];
-	return cell;
 }
 
 - (void)highlightRow:(NSInteger)row {
@@ -185,21 +295,76 @@
 	MPMediaItemCollection *collection = [MPMediaItemCollection collectionWithItems:@[item]];
 	[self.player setQueueWithItemCollection:collection];
 	[self.player play];
-	[self showNowPlaying:YES];
+	[self pushScreen:PPScreenNowPlaying];
 	[self updateNowPlayingInfo];
 	[self startProgressTimer];
 }
 
-#pragma mark - Now Playing
+- (void)shuffleAndPlay {
+	if (self.songs.count == 0) return;
+	NSMutableArray *shuffled = [self.songs mutableCopy];
+	for (NSInteger i = shuffled.count - 1; i > 0; i--) {
+		NSInteger j = arc4random_uniform((u_int32_t)(i + 1));
+		[shuffled exchangeObjectAtIndex:i withObjectAtIndex:j];
+	}
+	MPMediaItemCollection *collection = [MPMediaItemCollection collectionWithItems:shuffled];
+	[self.player setQueueWithItemCollection:collection];
+	[self.player play];
+	[self pushScreen:PPScreenNowPlaying];
+	[self updateNowPlayingInfo];
+	[self startProgressTimer];
+}
 
-- (void)showNowPlaying:(BOOL)show {
-	self.showingNowPlaying = show;
-	self.nowPlayingView.hidden = !show;
-	self.libraryTableView.hidden = show;
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+	if (tableView == self.mainMenuTableView) return [self mainMenuNumberOfRows];
+	return self.songs.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+	if (tableView == self.mainMenuTableView) {
+		static NSString *menuCellId = @"menuItem";
+		UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:menuCellId];
+		if (!cell) {
+			cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:menuCellId];
+			cell.selectionStyle = UITableViewCellSelectionStyleNone;
+		}
+		NSString *title = self.mainMenuItems[indexPath.row];
+		cell.textLabel.text = title;
+		BOOL selected = (indexPath.row == self.mainMenuSelectedRow);
+		cell.backgroundColor = selected ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor whiteColor];
+		cell.textLabel.textColor = selected ? [UIColor whiteColor] : [UIColor blackColor];
+		BOOL isAction = [title isEqualToString:@"Shuffle Songs"] || [title isEqualToString:@"Now Playing"];
+		cell.accessoryType = isAction ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator;
+		return cell;
+	}
+
+	static NSString *songCellId = @"song";
+	UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:songCellId];
+	if (!cell) {
+		cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:songCellId];
+		cell.selectionStyle = UITableViewCellSelectionStyleNone;
+	}
+	MPMediaItem *item = self.songs[indexPath.row];
+	cell.textLabel.text = [item valueForProperty:MPMediaItemPropertyTitle] ?: @"Без названия";
+	cell.detailTextLabel.text = [item valueForProperty:MPMediaItemPropertyArtist] ?: @"";
+	BOOL selected = (indexPath.row == self.selectedRow);
+	cell.backgroundColor = selected ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor whiteColor];
+	cell.textLabel.textColor = selected ? [UIColor whiteColor] : [UIColor blackColor];
+	cell.detailTextLabel.textColor = selected ? [UIColor whiteColor] : [UIColor darkGrayColor];
+	return cell;
 }
 
 - (void)nowPlayingItemChanged {
 	[self updateNowPlayingInfo];
+}
+
+- (void)playbackStateChanged {
+	BOOL playing = (self.player.playbackState == MPMusicPlaybackStatePlaying);
+	self.wheel.isPlaying = playing;
+	self.statusLabel.text = playing ? @"Воспроизведение" : @"Пауза";
+	if (playing) {
+		[self startProgressTimer];
+	}
 }
 
 - (void)updateNowPlayingInfo {
@@ -233,40 +398,51 @@
 	if (duration > 0) {
 		self.progressView.progress = current / duration;
 	}
-	self.statusLabel.text = (self.player.playbackState == MPMusicPlaybackStatePlaying) ? @"Воспроизведение" : @"Пауза";
 }
 
-#pragma mark - ClickWheelViewDelegate
-
 - (void)clickWheelDidScrollWithAngleDelta:(CGFloat)angleDelta {
-	if (self.showingNowPlaying) {
-		// колесо в Now Playing = громкость
+	PPScreen screen = self.currentScreen;
+	CGFloat step = 0.35;
+
+	if (screen == PPScreenNowPlaying) {
 		self.player.volume += (angleDelta > 0 ? 0.03 : -0.03);
 		return;
 	}
 
-	// колесо в библиотеке = навигация по списку
-	self.listScrollAccumulator += angleDelta;
-	CGFloat stepThreshold = 0.35; // радиан на строку
-	while (self.listScrollAccumulator > stepThreshold) {
-		[self highlightRow:self.selectedRow + 1];
-		self.listScrollAccumulator -= stepThreshold;
+	if (screen == PPScreenMainMenu) {
+		self.mainMenuScrollAccumulator += angleDelta;
+		while (self.mainMenuScrollAccumulator > step) {
+			[self highlightMainMenuRow:self.mainMenuSelectedRow + 1];
+			self.mainMenuScrollAccumulator -= step;
+		}
+		while (self.mainMenuScrollAccumulator < -step) {
+			[self highlightMainMenuRow:self.mainMenuSelectedRow - 1];
+			self.mainMenuScrollAccumulator += step;
+		}
+		return;
 	}
-	while (self.listScrollAccumulator < -stepThreshold) {
-		[self highlightRow:self.selectedRow - 1];
-		self.listScrollAccumulator += stepThreshold;
+
+	if (screen == PPScreenMusic) {
+		self.listScrollAccumulator += angleDelta;
+		while (self.listScrollAccumulator > step) {
+			[self highlightRow:self.selectedRow + 1];
+			self.listScrollAccumulator -= step;
+		}
+		while (self.listScrollAccumulator < -step) {
+			[self highlightRow:self.selectedRow - 1];
+			self.listScrollAccumulator += step;
+		}
+		return;
 	}
 }
 
 - (void)clickWheelDidPressButton:(ClickWheelButton)button {
 	switch (button) {
 		case ClickWheelButtonMenu:
-			[self showNowPlaying:NO];
+			[self popScreen];
 			break;
 		case ClickWheelButtonCenter:
-			if (!self.showingNowPlaying) {
-				[self playSelectedSong];
-			}
+			[self handleCenterPress];
 			break;
 		case ClickWheelButtonPlayPause:
 			if (self.player.playbackState == MPMusicPlaybackStatePlaying) {
@@ -280,6 +456,19 @@
 			break;
 		case ClickWheelButtonPrev:
 			[self.player skipToPreviousItem];
+			break;
+	}
+}
+
+- (void)handleCenterPress {
+	switch (self.currentScreen) {
+		case PPScreenMainMenu:
+			[self selectMainMenuItem:self.mainMenuSelectedRow];
+			break;
+		case PPScreenMusic:
+			[self playSelectedSong];
+			break;
+		default:
 			break;
 	}
 }

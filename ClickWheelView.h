@@ -10,9 +10,10 @@ typedef NS_ENUM(NSInteger, ClickWheelButton) {
 
 @protocol ClickWheelViewDelegate <NSObject>
 - (void)clickWheelDidPressButton:(ClickWheelButton)button;
-- (void)clickWheelDidScrollWithAngleDelta:(CGFloat)angleDelta; // радианы, + = по часовой
+- (void)clickWheelDidScrollWithAngleDelta:(CGFloat)angleDelta;
 @end
 
 @interface ClickWheelView : UIView
 @property (nonatomic, weak) id<ClickWheelViewDelegate> delegate;
+@property (nonatomic, assign) BOOL isPlaying;
 @end
