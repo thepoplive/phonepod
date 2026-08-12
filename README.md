@@ -16,7 +16,7 @@
 - Иконка приложения 57x57 / 114x114 (`Resources/icon.png`, `Resources/icon@2x.png`)
 
 ## Установка на устройство
-1. Забрать `PhonePod.ipa` из artifacts после сборки Actions.
+1. Забрать `PhonePod.ipa` из Releases (автоматически создаются при сборке GitHub Actions).
 2. Установить через Filza (`Install`) или Cydia Impactor на устройство с джейлбрейком iOS 6–8 (тестировалось под iOS 8.4.1 на iPhone 4S).
 
 ## Локальная сборка (если есть Linux с уже настроенным Theos)
@@ -37,3 +37,5 @@ make package FINALPACKAGE=1
 ## TODO / на будущее
 - haptic-подобный отклик
 - Плейлисты и поиск через MENU (сейчас только полный список песен)
+
+С любовью, [blxckfvde](https://github.com/thepoplive) <3
