@@ -1,6 +1,7 @@
 #import "PhonePodViewController.h"
 #import "ClickWheelView.h"
 #import <MediaPlayer/MediaPlayer.h>
+#import <AssetsLibrary/AssetsLibrary.h>
 
 typedef NS_ENUM(NSInteger, PPScreen) {
 	PPScreenMainMenu,
@@ -10,7 +11,9 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 	PPScreenVideos,
 	PPScreenExtras,
 	PPScreenSettings,
-	PPScreenNowPlaying
+	PPScreenLanguage,
+	PPScreenNowPlaying,
+	PPScreenPhotoViewer
 };
 
 @interface PhonePodViewController () <ClickWheelViewDelegate, UITableViewDataSource, UITableViewDelegate>
@@ -22,7 +25,6 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 @property (nonatomic, strong) UIView *screenView;
 @property (nonatomic, strong) UILabel *topBarLabel;
 
-@property (nonatomic, strong) NSArray *mainMenuItems;
 @property (nonatomic, strong) UITableView *mainMenuTableView;
 @property (nonatomic, assign) NSInteger mainMenuSelectedRow;
 @property (nonatomic, assign) CGFloat mainMenuScrollAccumulator;
@@ -30,6 +32,25 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 @property (nonatomic, strong) UITableView *libraryTableView;
 @property (nonatomic, assign) NSInteger selectedRow;
 @property (nonatomic, assign) CGFloat listScrollAccumulator;
+
+@property (nonatomic, strong) UITableView *settingsTableView;
+@property (nonatomic, assign) NSInteger settingsSelectedRow;
+@property (nonatomic, assign) CGFloat settingsScrollAccumulator;
+@property (nonatomic, strong) UILabel *settingsFooterLabel;
+@property (nonatomic, copy) NSString *language;
+
+@property (nonatomic, strong) ALAssetsLibrary *assetsLibrary;
+@property (nonatomic, strong) NSMutableArray *assets;
+@property (nonatomic, strong) UIScrollView *photosGridView;
+@property (nonatomic, strong) NSMutableArray *photoThumbViews;
+@property (nonatomic, assign) NSInteger photoIndex;
+@property (nonatomic, assign) NSInteger photosPerRow;
+@property (nonatomic, assign) CGFloat photoCellSize;
+@property (nonatomic, assign) CGFloat photoScrollAccumulator;
+@property (nonatomic, assign) BOOL photosLoadFailed;
+@property (nonatomic, strong) UILabel *photosEmptyLabel;
+@property (nonatomic, strong) UIView *photoViewerView;
+@property (nonatomic, strong) UIImageView *photoViewerImageView;
 
 @property (nonatomic, strong) UIView *placeholderView;
 @property (nonatomic, strong) UILabel *placeholderLabel;
@@ -57,14 +78,23 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 	self.songs = @[];
 	self.selectedRow = 0;
 	self.mainMenuSelectedRow = 0;
+	self.settingsSelectedRow = 0;
 	self.listScrollAccumulator = 0;
 	self.mainMenuScrollAccumulator = 0;
+	self.settingsScrollAccumulator = 0;
+	self.photoIndex = 0;
+	self.photosPerRow = 4;
+	self.assets = [NSMutableArray array];
+	self.photoThumbViews = [NSMutableArray array];
+	NSString *savedLang = [[NSUserDefaults standardUserDefaults] objectForKey:@"PhonePodLanguage"];
+	_language = (savedLang != nil) ? savedLang : @"en";
 	self.screenStack = [NSMutableArray arrayWithObject:@(PPScreenMainMenu)];
 
 	[self buildChrome];
 	[self buildScreen];
 	[self buildWheel];
 	[self loadLibrary];
+	[self loadPhotos];
 	[self displayCurrentScreen];
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
@@ -114,7 +144,6 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 
 	CGRect contentFrame = CGRectMake(0, topBarHeight, w, screenHeight - topBarHeight);
 
-	self.mainMenuItems = @[@"Music", @"Photos", @"Videos", @"Playlists", @"Extras", @"Settings", @"Shuffle Songs", @"Now Playing"];
 	self.mainMenuTableView = [[UITableView alloc] initWithFrame:contentFrame style:UITableViewStylePlain];
 	self.mainMenuTableView.dataSource = self;
 	self.mainMenuTableView.delegate = self;
@@ -133,6 +162,51 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 	self.libraryTableView.hidden = YES;
 	self.libraryTableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 	[self.screenView addSubview:self.libraryTableView];
+
+	self.settingsTableView = [[UITableView alloc] initWithFrame:contentFrame style:UITableViewStylePlain];
+	self.settingsTableView.dataSource = self;
+	self.settingsTableView.delegate = self;
+	self.settingsTableView.rowHeight = 32;
+	self.settingsTableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
+	self.settingsTableView.userInteractionEnabled = NO;
+	self.settingsTableView.hidden = YES;
+	self.settingsTableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.screenView addSubview:self.settingsTableView];
+
+	self.settingsFooterLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, contentFrame.size.height - 26, w - 16, 20)];
+	self.settingsFooterLabel.font = [UIFont systemFontOfSize:10];
+	self.settingsFooterLabel.textColor = [UIColor grayColor];
+	self.settingsFooterLabel.textAlignment = NSTextAlignmentCenter;
+	self.settingsFooterLabel.text = @"сделано blxckfvde с любовью <3";
+	self.settingsFooterLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+	[self.screenView addSubview:self.settingsFooterLabel];
+
+	self.photosGridView = [[UIScrollView alloc] initWithFrame:contentFrame];
+	self.photosGridView.backgroundColor = [UIColor whiteColor];
+	self.photosGridView.userInteractionEnabled = NO;
+	self.photosGridView.hidden = YES;
+	self.photosGridView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.screenView addSubview:self.photosGridView];
+
+	self.photosEmptyLabel = [[UILabel alloc] initWithFrame:self.photosGridView.bounds];
+	self.photosEmptyLabel.numberOfLines = 0;
+	self.photosEmptyLabel.textAlignment = NSTextAlignmentCenter;
+	self.photosEmptyLabel.textColor = [UIColor grayColor];
+	self.photosEmptyLabel.font = [UIFont systemFontOfSize:13];
+	self.photosEmptyLabel.hidden = YES;
+	self.photosEmptyLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.photosGridView addSubview:self.photosEmptyLabel];
+
+	self.photoViewerView = [[UIView alloc] initWithFrame:contentFrame];
+	self.photoViewerView.backgroundColor = [UIColor blackColor];
+	self.photoViewerView.hidden = YES;
+	self.photoViewerView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.screenView addSubview:self.photoViewerView];
+
+	self.photoViewerImageView = [[UIImageView alloc] initWithFrame:self.photoViewerView.bounds];
+	self.photoViewerImageView.contentMode = UIViewContentModeScaleAspectFit;
+	self.photoViewerImageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+	[self.photoViewerView addSubview:self.photoViewerImageView];
 
 	self.placeholderView = [[UIView alloc] initWithFrame:contentFrame];
 	self.placeholderView.backgroundColor = [UIColor whiteColor];
@@ -168,7 +242,7 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 
 	self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(textX, 8, textW, 20)];
 	self.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-	self.titleLabel.text = @"Нет трека";
+	self.titleLabel.text = [self lstr:@"No track" ru:@"Нет трека"];
 	[self.nowPlayingView addSubview:self.titleLabel];
 
 	self.artistLabel = [[UILabel alloc] initWithFrame:CGRectMake(textX, 30, textW, 18)];
@@ -179,7 +253,7 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 	self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(textX, 52, textW, 16)];
 	self.statusLabel.font = [UIFont systemFontOfSize:11];
 	self.statusLabel.textColor = [UIColor grayColor];
-	self.statusLabel.text = @"Остановлено";
+	self.statusLabel.text = [self lstr:@"Stopped" ru:@"Остановлено"];
 	[self.nowPlayingView addSubview:self.statusLabel];
 
 	self.progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
@@ -222,20 +296,73 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 
 	self.mainMenuTableView.hidden = (screen != PPScreenMainMenu);
 	self.libraryTableView.hidden = (screen != PPScreenMusic);
+	self.settingsTableView.hidden = !(screen == PPScreenSettings || screen == PPScreenLanguage);
+	self.settingsFooterLabel.hidden = (screen != PPScreenSettings);
+	self.photosGridView.hidden = (screen != PPScreenPhotos);
+	self.photoViewerView.hidden = (screen != PPScreenPhotoViewer);
 	self.nowPlayingView.hidden = (screen != PPScreenNowPlaying);
-	self.placeholderView.hidden = !(screen == PPScreenPlaylists || screen == PPScreenPhotos ||
-		screen == PPScreenVideos || screen == PPScreenExtras || screen == PPScreenSettings);
+	self.placeholderView.hidden = !(screen == PPScreenPlaylists || screen == PPScreenVideos || screen == PPScreenExtras);
 
 	switch (screen) {
 		case PPScreenMainMenu: self.topBarLabel.text = @"iPod"; break;
-		case PPScreenMusic: self.topBarLabel.text = @"Music"; break;
-		case PPScreenPlaylists: self.topBarLabel.text = @"Playlists"; self.placeholderLabel.text = @"Плейлисты\n(в разработке)"; break;
-		case PPScreenPhotos: self.topBarLabel.text = @"Photos"; self.placeholderLabel.text = @"Фото\n(в разработке)"; break;
-		case PPScreenVideos: self.topBarLabel.text = @"Videos"; self.placeholderLabel.text = @"Видео\n(в разработке)"; break;
-		case PPScreenExtras: self.topBarLabel.text = @"Extras"; self.placeholderLabel.text = @"Дополнения\n(в разработке)"; break;
-		case PPScreenSettings: self.topBarLabel.text = @"Settings"; self.placeholderLabel.text = @"Настройки\n(в разработке)"; break;
-		case PPScreenNowPlaying: self.topBarLabel.text = @"Now Playing"; break;
+		case PPScreenMusic: self.topBarLabel.text = [self lstr:@"Music" ru:@"Музыка"]; break;
+		case PPScreenPlaylists:
+			self.topBarLabel.text = [self lstr:@"Playlists" ru:@"Плейлисты"];
+			self.placeholderLabel.text = [self lstr:@"Playlists\n(in development)" ru:@"Плейлисты\n(в разработке)"];
+			break;
+		case PPScreenPhotos:
+			self.topBarLabel.text = [self lstr:@"Photos" ru:@"Фото"];
+			[self ensurePhotoGrid];
+			break;
+		case PPScreenVideos:
+			self.topBarLabel.text = [self lstr:@"Videos" ru:@"Видео"];
+			self.placeholderLabel.text = [self lstr:@"Videos\n(in development)" ru:@"Видео\n(в разработке)"];
+			break;
+		case PPScreenExtras:
+			self.topBarLabel.text = [self lstr:@"Extras" ru:@"Дополнения"];
+			self.placeholderLabel.text = [self lstr:@"Extras\n(in development)" ru:@"Дополнения\n(в разработке)"];
+			break;
+		case PPScreenSettings:
+			self.topBarLabel.text = [self lstr:@"Settings" ru:@"Настройки"];
+			[self highlightSettingsRow:0];
+			break;
+		case PPScreenLanguage:
+			self.topBarLabel.text = [self lstr:@"Language" ru:@"Язык"];
+			[self highlightSettingsRow:0];
+			break;
+		case PPScreenNowPlaying: self.topBarLabel.text = [self lstr:@"Now Playing" ru:@"Сейчас играет"]; break;
+		case PPScreenPhotoViewer:
+			self.topBarLabel.text = [self lstr:@"Photos" ru:@"Фото"];
+			[self showCurrentPhoto];
+			break;
 	}
+}
+
+- (NSString *)lstr:(NSString *)en ru:(NSString *)ru {
+	return [self.language isEqualToString:@"ru"] ? ru : en;
+}
+
+- (NSArray *)mainMenuItems {
+	return @[
+		[self lstr:@"Music" ru:@"Музыка"],
+		[self lstr:@"Photos" ru:@"Фото"],
+		[self lstr:@"Videos" ru:@"Видео"],
+		[self lstr:@"Playlists" ru:@"Плейлисты"],
+		[self lstr:@"Extras" ru:@"Дополнения"],
+		[self lstr:@"Settings" ru:@"Настройки"],
+		[self lstr:@"Shuffle Songs" ru:@"Перемешать"],
+		[self lstr:@"Now Playing" ru:@"Сейчас играет"]
+	];
+}
+
+- (void)setLanguage:(NSString *)language {
+	_language = language;
+	[[NSUserDefaults standardUserDefaults] setObject:language forKey:@"PhonePodLanguage"];
+	[[NSUserDefaults standardUserDefaults] synchronize];
+	[self.mainMenuTableView reloadData];
+	[self.libraryTableView reloadData];
+	[self.settingsTableView reloadData];
+	[self displayCurrentScreen];
 }
 
 - (NSInteger)mainMenuNumberOfRows {
@@ -251,23 +378,16 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 }
 
 - (void)selectMainMenuItem:(NSInteger)row {
-	NSString *item = self.mainMenuItems[row];
-	if ([item isEqualToString:@"Music"]) {
-		[self pushScreen:PPScreenMusic];
-	} else if ([item isEqualToString:@"Photos"]) {
-		[self pushScreen:PPScreenPhotos];
-	} else if ([item isEqualToString:@"Videos"]) {
-		[self pushScreen:PPScreenVideos];
-	} else if ([item isEqualToString:@"Playlists"]) {
-		[self pushScreen:PPScreenPlaylists];
-	} else if ([item isEqualToString:@"Extras"]) {
-		[self pushScreen:PPScreenExtras];
-	} else if ([item isEqualToString:@"Settings"]) {
-		[self pushScreen:PPScreenSettings];
-	} else if ([item isEqualToString:@"Shuffle Songs"]) {
-		[self shuffleAndPlay];
-	} else if ([item isEqualToString:@"Now Playing"]) {
-		[self pushScreen:PPScreenNowPlaying];
+	switch (row) {
+		case 0: [self pushScreen:PPScreenMusic]; break;
+		case 1: [self pushScreen:PPScreenPhotos]; break;
+		case 2: [self pushScreen:PPScreenVideos]; break;
+		case 3: [self pushScreen:PPScreenPlaylists]; break;
+		case 4: [self pushScreen:PPScreenExtras]; break;
+		case 5: [self pushScreen:PPScreenSettings]; break;
+		case 6: [self shuffleAndPlay]; break;
+		case 7: [self pushScreen:PPScreenNowPlaying]; break;
+		default: break;
 	}
 }
 
@@ -278,6 +398,127 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 	if (self.songs.count > 0) {
 		[self highlightRow:0];
 	}
+}
+
+- (void)highlightSettingsRow:(NSInteger)row {
+	NSInteger count = (self.currentScreen == PPScreenLanguage) ? 2 : 1;
+	if (count == 0) return;
+	row = MAX(0, MIN(row, count - 1));
+	self.settingsSelectedRow = row;
+	[self.settingsTableView reloadData];
+	[self.settingsTableView scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:0]
+		atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+}
+
+- (void)selectSettingsItem {
+	if (self.currentScreen == PPScreenLanguage) {
+		[self setLanguage:(self.settingsSelectedRow == 0) ? @"en" : @"ru"];
+		[self popScreen];
+	} else {
+		[self pushScreen:PPScreenLanguage];
+	}
+}
+
+- (void)loadPhotos {
+	self.assetsLibrary = [[ALAssetsLibrary alloc] init];
+	__weak PhonePodViewController *weakSelf = self;
+	[self.assetsLibrary enumerateGroupsWithTypes:ALAssetsGroupSavedPhotos
+		usingBlock:^(ALAssetsGroup *group, BOOL *stop) {
+			if (group) {
+				[group setAssetsFilter:[ALAssetsFilter allPhotos]];
+				[group enumerateAssetsUsingBlock:^(ALAsset *result, NSUInteger index, BOOL *stop) {
+					if (result) [weakSelf.assets addObject:result];
+				}];
+			} else {
+				dispatch_async(dispatch_get_main_queue(), ^{
+					[weakSelf ensurePhotoGrid];
+				});
+			}
+		} failureBlock:^(NSError *error) {
+			dispatch_async(dispatch_get_main_queue(), ^{
+				weakSelf.photosLoadFailed = YES;
+				[weakSelf ensurePhotoGrid];
+			});
+		}];
+}
+
+- (void)ensurePhotoGrid {
+	if (!self.photosGridView) return;
+	if (self.assets.count == 0) {
+		self.photosEmptyLabel.hidden = NO;
+		self.photosEmptyLabel.text = self.photosLoadFailed
+			? [self lstr:@"No access to photos" ru:@"Нет доступа к фото"]
+			: [self lstr:@"No photos" ru:@"Нет фотографий"];
+		for (UIView *v in self.photoThumbViews) [v removeFromSuperview];
+		[self.photoThumbViews removeAllObjects];
+		return;
+	}
+	self.photosEmptyLabel.hidden = YES;
+	if (self.photoThumbViews.count != self.assets.count) {
+		[self rebuildPhotoGrid];
+	} else {
+		[self highlightPhoto:self.photoIndex];
+	}
+}
+
+- (void)rebuildPhotoGrid {
+	for (UIView *v in self.photoThumbViews) [v removeFromSuperview];
+	[self.photoThumbViews removeAllObjects];
+
+	CGFloat pad = 3;
+	CGFloat totalW = self.photosGridView.bounds.size.width - pad * 2;
+	if (totalW <= 0 || self.assets.count == 0) return;
+
+	self.photoCellSize = floor((totalW - (self.photosPerRow - 1) * pad) / self.photosPerRow);
+	NSInteger rows = (self.assets.count + self.photosPerRow - 1) / self.photosPerRow;
+	self.photosGridView.contentSize = CGSizeMake(self.photosGridView.bounds.size.width, rows * (self.photoCellSize + pad) + pad);
+
+	for (NSInteger i = 0; i < self.assets.count; i++) {
+		NSInteger r = i / self.photosPerRow;
+		NSInteger c = i % self.photosPerRow;
+		CGRect f = CGRectMake(pad + c * (self.photoCellSize + pad), pad + r * (self.photoCellSize + pad),
+			self.photoCellSize, self.photoCellSize);
+		UIImageView *v = [[UIImageView alloc] initWithFrame:f];
+		v.backgroundColor = [UIColor lightGrayColor];
+		v.contentMode = UIViewContentModeScaleAspectFill;
+		v.clipsToBounds = YES;
+		ALAsset *asset = self.assets[i];
+		v.image = [UIImage imageWithCGImage:asset.aspectRatioThumbnail];
+		[self.photosGridView addSubview:v];
+		[self.photoThumbViews addObject:v];
+	}
+	[self highlightPhoto:self.photoIndex];
+}
+
+- (void)highlightPhoto:(NSInteger)index {
+	if (self.assets.count == 0) return;
+	index = MAX(0, MIN(index, (NSInteger)self.assets.count - 1));
+	self.photoIndex = index;
+	UIColor *sel = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
+	for (NSInteger i = 0; i < self.photoThumbViews.count; i++) {
+		UIImageView *v = self.photoThumbViews[i];
+		v.layer.borderWidth = (i == index) ? 2.0 : 0.0;
+		v.layer.borderColor = sel.CGColor;
+	}
+	NSInteger row = index / self.photosPerRow;
+	CGFloat y = row * (self.photoCellSize + 3);
+	CGRect vis = self.photosGridView.bounds;
+	if (y < vis.origin.y) {
+		[self.photosGridView setContentOffset:CGPointMake(0, y) animated:YES];
+	} else if (y + self.photoCellSize > vis.origin.y + vis.size.height) {
+		[self.photosGridView setContentOffset:CGPointMake(0, y + self.photoCellSize - vis.size.height) animated:YES];
+	}
+}
+
+- (void)showCurrentPhoto {
+	if (self.assets.count == 0) {
+		self.photoViewerImageView.image = nil;
+		return;
+	}
+	ALAsset *asset = self.assets[self.photoIndex];
+	CGImageRef image = [[asset defaultRepresentation] fullScreenImage];
+	if (!image) image = asset.aspectRatioThumbnail;
+	self.photoViewerImageView.image = [UIImage imageWithCGImage:image];
 }
 
 - (void)highlightRow:(NSInteger)row {
@@ -317,6 +558,7 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
 	if (tableView == self.mainMenuTableView) return [self mainMenuNumberOfRows];
+	if (tableView == self.settingsTableView) return (self.currentScreen == PPScreenLanguage) ? 2 : 1;
 	return self.songs.count;
 }
 
@@ -333,8 +575,32 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 		BOOL selected = (indexPath.row == self.mainMenuSelectedRow);
 		cell.backgroundColor = selected ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor whiteColor];
 		cell.textLabel.textColor = selected ? [UIColor whiteColor] : [UIColor blackColor];
-		BOOL isAction = [title isEqualToString:@"Shuffle Songs"] || [title isEqualToString:@"Now Playing"];
+		BOOL isAction = (indexPath.row == 6) || (indexPath.row == 7);
 		cell.accessoryType = isAction ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator;
+		return cell;
+	}
+
+	if (tableView == self.settingsTableView) {
+		static NSString *settingsCellId = @"settings";
+		UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:settingsCellId];
+		if (!cell) {
+			cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:settingsCellId];
+			cell.selectionStyle = UITableViewCellSelectionStyleNone;
+		}
+		BOOL selected = (indexPath.row == self.settingsSelectedRow);
+		cell.backgroundColor = selected ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor whiteColor];
+		if (self.currentScreen == PPScreenLanguage) {
+			BOOL isEnglish = (indexPath.row == 0);
+			cell.textLabel.text = isEnglish ? @"English" : @"Русский";
+			BOOL isCurrent = [self.language isEqualToString:isEnglish ? @"en" : @"ru"];
+			cell.accessoryType = isCurrent ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+			cell.textLabel.textColor = selected ? [UIColor whiteColor]
+				: (isCurrent ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor blackColor]);
+		} else {
+			cell.textLabel.text = [self lstr:@"Language" ru:@"Язык"];
+			cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+			cell.textLabel.textColor = selected ? [UIColor whiteColor] : [UIColor blackColor];
+		}
 		return cell;
 	}
 
@@ -345,7 +611,7 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 		cell.selectionStyle = UITableViewCellSelectionStyleNone;
 	}
 	MPMediaItem *item = self.songs[indexPath.row];
-	cell.textLabel.text = [item valueForProperty:MPMediaItemPropertyTitle] ?: @"Без названия";
+	cell.textLabel.text = [item valueForProperty:MPMediaItemPropertyTitle] ?: [self lstr:@"Unknown" ru:@"Без названия"];
 	cell.detailTextLabel.text = [item valueForProperty:MPMediaItemPropertyArtist] ?: @"";
 	BOOL selected = (indexPath.row == self.selectedRow);
 	cell.backgroundColor = selected ? [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0] : [UIColor whiteColor];
@@ -361,7 +627,7 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 - (void)playbackStateChanged {
 	BOOL playing = (self.player.playbackState == MPMusicPlaybackStatePlaying);
 	self.wheel.isPlaying = playing;
-	self.statusLabel.text = playing ? @"Воспроизведение" : @"Пауза";
+	self.statusLabel.text = playing ? [self lstr:@"Playing" ru:@"Воспроизведение"] : [self lstr:@"Paused" ru:@"Пауза"];
 	if (playing) {
 		[self startProgressTimer];
 	}
@@ -370,7 +636,7 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 - (void)updateNowPlayingInfo {
 	MPMediaItem *item = self.player.nowPlayingItem;
 	if (!item) {
-		self.titleLabel.text = @"Нет трека";
+		self.titleLabel.text = [self lstr:@"No track" ru:@"Нет трека"];
 		self.artistLabel.text = @"";
 		return;
 	}
@@ -434,6 +700,35 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 		}
 		return;
 	}
+
+	if (screen == PPScreenSettings || screen == PPScreenLanguage) {
+		self.settingsScrollAccumulator += angleDelta;
+		while (self.settingsScrollAccumulator > step) {
+			[self highlightSettingsRow:self.settingsSelectedRow + 1];
+			self.settingsScrollAccumulator -= step;
+		}
+		while (self.settingsScrollAccumulator < -step) {
+			[self highlightSettingsRow:self.settingsSelectedRow - 1];
+			self.settingsScrollAccumulator += step;
+		}
+		return;
+	}
+
+	if (screen == PPScreenPhotos || screen == PPScreenPhotoViewer) {
+		self.photoScrollAccumulator += angleDelta;
+		CGFloat photoStep = (screen == PPScreenPhotoViewer) ? 0.25 : 0.35;
+		while (self.photoScrollAccumulator > photoStep) {
+			[self highlightPhoto:self.photoIndex + 1];
+			if (screen == PPScreenPhotoViewer) [self showCurrentPhoto];
+			self.photoScrollAccumulator -= photoStep;
+		}
+		while (self.photoScrollAccumulator < -photoStep) {
+			[self highlightPhoto:self.photoIndex - 1];
+			if (screen == PPScreenPhotoViewer) [self showCurrentPhoto];
+			self.photoScrollAccumulator += photoStep;
+		}
+		return;
+	}
 }
 
 - (void)clickWheelDidPressButton:(ClickWheelButton)button {
@@ -467,6 +762,13 @@ typedef NS_ENUM(NSInteger, PPScreen) {
 			break;
 		case PPScreenMusic:
 			[self playSelectedSong];
+			break;
+		case PPScreenPhotos:
+			if (self.assets.count > 0) [self pushScreen:PPScreenPhotoViewer];
+			break;
+		case PPScreenSettings:
+		case PPScreenLanguage:
+			[self selectSettingsItem];
 			break;
 		default:
 			break;

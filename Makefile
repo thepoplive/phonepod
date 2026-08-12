@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 APPLICATION_NAME = PhonePod
 
 PhonePod_FILES = main.m AppDelegate.m PhonePodViewController.m ClickWheelView.m
-PhonePod_FRAMEWORKS = UIKit CoreGraphics QuartzCore MediaPlayer AVFoundation Foundation
+PhonePod_FRAMEWORKS = UIKit CoreGraphics QuartzCore MediaPlayer AVFoundation AssetsLibrary Foundation
 PhonePod_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 PhonePod_CODESIGN_FLAGS = -Sentitlements.plist
 
